@@ -2,6 +2,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import skimage
 
 
 IMG_DIR = 'img'
@@ -55,26 +56,99 @@ def show_connected_components(labels, window_name):
     show_image(labeled_img, window_name)
 
 
-def get_components_coords(labels):
+def get_connected_component(labels, label, img_size):
+    '''
+    Return a specific connected component on a new image
+    '''
+    mask = np.zeros_like(labels, dtype=np.uint8)
+    mask[labels == label] = 255
+    return mask
+
+
+def get_components_coords(labels, num_labels):
     '''
     Compute connected components coordinates
     '''
     components_coords = []
-    num_labels = np.max(labels) + 1
-    for i in range(num_labels):
-        components_coords.append(np.argwhere(labels == i))
+    for i in range(0, num_labels):
+        components_coords.append(np.fliplr(np.argwhere(labels == i)))
     return components_coords
 
 
-def get_moments(components_coords):
+def moment(coords, m, n):
+    '''
+    Compute moment of order (m, n) with the given coordinates
+    '''
+    def compute_moment(v):
+        return (v[0] ** m) * (v[1] ** n)
+
+    return np.sum(np.apply_along_axis(compute_moment, axis=1, arr=coords))
+
+
+def central_moment(coords, centroid, m, n):
+    '''
+    Compute central moment of order (m, n) with the given coordinates
+    '''
+    xc, yc = centroid[0], centroid[1]
+
+    def compute_central_moment(v):
+        return ((v[0] - xc) ** m) * ((v[1] - yc) ** n)
+
+    return np.sum(np.apply_along_axis(compute_central_moment, axis=1, arr=coords))
+
+
+def compute_moments(components_coords, centroids, num_labels):
     '''
     Compute connected components moments
     '''
-    num_labels = len(components_coords)
+    product = list((m, n) for m in range(3) for n in range(3))
     moments = [None] * num_labels
     for i in range(1, num_labels):
-        moments[i] = cv2.moments(components_coords[i])
+        moments[i] = dict()
+        for m, n in product:
+            moments[i][f'm{m}{n}'] = moment(
+                components_coords[i], m, n
+            )
+            moments[i][f'mu{m}{n}'] = central_moment(
+                components_coords[i], centroids[i], m, n
+            )
     return moments
+
+
+def compute_centroids(components_coords):
+    '''
+    Compute blobs centroids from coordinates
+    '''
+    centroids = [None] * len(components_coords)
+    for i, coords in enumerate(components_coords):
+        centroids[i] = np.sum(coords, axis=0) / len(coords)
+    return centroids
+
+
+def compute_centroids_from_moments(moments):
+    '''
+    Compute blobs centroids from moments
+    '''
+    centroids = [None] * len(moments)
+    for i, blob_moments in enumerate(moments):
+        if blob_moments is not None:
+            centroid_x = int(blob_moments["m10"] / blob_moments["m00"])
+            centroid_y = int(blob_moments["m01"] / blob_moments["m00"])
+            centroids[i] = (centroid_x, centroid_y)
+    return centroids
+
+
+def show_centroids(img, centroids, window_name):
+    '''
+    Show the given centroid on the image as small circles
+    '''
+    image = img.copy()
+    for centroid in centroids:
+        if centroid is not None:
+            cv2.circle(
+                image, (int(centroid[0]), int(centroid[1])), 1, (255, 0, 0), 1
+            )
+    show_image(image, window_name)
 
 
 def get_blobs_orientation(moments):
@@ -86,7 +160,7 @@ def get_blobs_orientation(moments):
         if blob_moments is not None:
             major_axis_angle = -0.5 * np.arctan(
                 blob_moments['mu11'] /
-                (blob_moments['mu02'] + blob_moments['mu20'] + 1e-5)
+                (blob_moments['mu02'] - blob_moments['mu20'] + 1e-5)
             )
             minor_axis_angle = major_axis_angle + (np.pi / 2)
             angles[i] = {
@@ -141,8 +215,10 @@ def show_blobs_straight_bbox(img, blobs_bbox, window_name):
     show_image(image, window_name)
 
 
-def show_blobs_axis(img, angles, centroids):
+def show_blobs_axis(img, angles, centroids, window_name):
     '''
+    Show blobs major and minor axis as a line
+    through the barycentre
     '''
     image = img.copy()
     for i, centroid in enumerate(centroids):
@@ -156,7 +232,7 @@ def show_blobs_axis(img, angles, centroids):
                 image, (int(centroid[0]), int(centroid[1])),
                 (int(point[0]), int(point[1])), (0, 0, 255), 1
             )
-    show_image(image, "TEST")
+    show_image(image, window_name)
 
 
 def main():
@@ -164,19 +240,21 @@ def main():
     _, threshed = cv2.threshold(
         img, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU
     )
-    show_image(threshed, "Threshed")
-    _, labels, stats, centroids = cv2.connectedComponentsWithStats(threshed)
-    print(centroids)
-    show_connected_components(labels, "Connected components")
-    components_coords = get_components_coords(labels)
-    print(components_coords)
-    moments = get_moments(components_coords)
+    inv_threshed = cv2.bitwise_not(threshed)
+    show_image(inv_threshed, "Inverted threshed")
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        inv_threshed, connectivity=8
+    )
+    show_connected_components(labels, window_name="Connected components")
+    components_coords = get_components_coords(labels, num_labels)
+    moments = compute_moments(components_coords, centroids, num_labels)
+    show_centroids(img, centroids, "Centroids")
     angles = get_blobs_orientation(moments)
-    # blobs_mer = get_blobs_mer(components_coords)
-    # show_blobs_mer(threshed, blobs_mer, "MER")
-    # blobs_bbox=get_blobs_straight_bbox(components_coords)
+    blobs_mer = get_blobs_mer(components_coords)
+    show_blobs_mer(img, blobs_mer, "MER")
+    # blobs_bbox = get_blobs_straight_bbox(components_coords)
     # show_blobs_straight_bbox(threshed, blobs_bbox, "BBOX")
-    show_blobs_axis(threshed, angles, centroids)
+    show_blobs_axis(img, angles, centroids, "Major axis")
 
 
 if __name__ == '__main__':
