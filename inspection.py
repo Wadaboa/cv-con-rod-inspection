@@ -34,7 +34,7 @@ def read_images():
         ]
 
 
-def show_image(image: np.ndarray, window_name: str, wait: bool = True) -> None:
+def show_image(image, window_name, wait=True):
     '''
     Show an image and eventually wait until the user press a key
     '''
@@ -97,11 +97,12 @@ def central_moment(coords, centroid, m, n):
     return np.sum(np.apply_along_axis(compute_central_moment, axis=1, arr=coords))
 
 
-def compute_moments(components_coords, centroids, num_labels):
+def compute_moments(components_coords, centroids):
     '''
     Compute connected components moments
     '''
     product = list((m, n) for m in range(3) for n in range(3))
+    num_labels = len(centroids)
     moments = [None] * num_labels
     for i in range(1, num_labels):
         moments[i] = dict()
@@ -151,22 +152,45 @@ def show_centroids(img, centroids, window_name):
     show_image(image, window_name)
 
 
-def get_blobs_orientation(moments):
+def get_blobs_orientation_from_moments(moments):
     '''
     Compute blobs orientation from central moments
     '''
     angles = [None] * len(moments)
     for i, blob_moments in enumerate(moments):
         if blob_moments is not None:
-            major_axis_angle = -0.5 * np.arctan(
-                blob_moments['mu11'] /
+            theta = -0.5 * np.arctan(
+                (2 * blob_moments['mu11']) /
                 (blob_moments['mu02'] - blob_moments['mu20'] + 1e-5)
             )
-            minor_axis_angle = major_axis_angle + (np.pi / 2)
+            print(theta)
             angles[i] = {
-                'major': major_axis_angle,
-                'minor': minor_axis_angle
+                'major': theta,
+                'minor': theta + (np.pi / 2)
             }
+    return angles
+
+
+def get_blobs_orientation_from_cov(components_coords, centroids):
+    '''
+    Compute blobs orientation from the covariance matrix
+    associated with the components coordinates
+    '''
+    angles = [None] * len(components_coords)
+    for i, coords in enumerate(components_coords):
+        xy = np.transpose(coords)
+        x = xy[0] - centroids[i][0]
+        y = xy[1] - centroids[i][1]
+        values = np.vstack([x, y])
+        cov = np.cov(values)
+        evals, evecs = np.linalg.eig(cov)
+        sort_indices = np.argsort(evals)[::-1]
+        x_v1, y_v1 = evecs[:, sort_indices[0]]
+        x_v2, y_v2 = evecs[:, sort_indices[1]]
+        angles[i] = {
+            'major': np.arctan(x_v1 / y_v1),
+            'minor': np.arctan(x_v2 / y_v2)
+        }
     return angles
 
 
@@ -236,7 +260,7 @@ def show_blobs_axis(img, angles, centroids, window_name):
 
 
 def main():
-    img = cv2.imread('img/task-1/01.bmp', cv2.IMREAD_GRAYSCALE)
+    img = cv2.imread('img/task-1/04.bmp', cv2.IMREAD_GRAYSCALE)
     _, threshed = cv2.threshold(
         img, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU
     )
@@ -247,14 +271,15 @@ def main():
     )
     show_connected_components(labels, window_name="Connected components")
     components_coords = get_components_coords(labels, num_labels)
-    moments = compute_moments(components_coords, centroids, num_labels)
+    moments = compute_moments(components_coords, centroids)
     show_centroids(img, centroids, "Centroids")
-    angles = get_blobs_orientation(moments)
+    angles = get_blobs_orientation_from_moments(moments)
+    angles = get_blobs_orientation_from_cov(components_coords, centroids)
+    show_blobs_axis(img, angles, centroids, "Major axis")
     blobs_mer = get_blobs_mer(components_coords)
     show_blobs_mer(img, blobs_mer, "MER")
     # blobs_bbox = get_blobs_straight_bbox(components_coords)
     # show_blobs_straight_bbox(threshed, blobs_bbox, "BBOX")
-    show_blobs_axis(img, angles, centroids, "Major axis")
 
 
 if __name__ == '__main__':
