@@ -254,10 +254,10 @@ def get_blobs_orientation_from_cov(components_coords, centroids):
 
 
 def get_holes_number(labels, num_labels):
-	'''
-	Compute the number of holes for each connected component,
-	excluding the background
-	'''
+    '''
+    Compute the number of holes for each connected component,
+    excluding the background
+    '''
     n_holes = [None] * num_labels
     for i in range(1, num_labels):
         comp = get_connected_component(labels, i)
@@ -327,6 +327,30 @@ def get_blobs_straight_bbox(components_coords):
     return blobs_bbox
 
 
+def order_points(pts):
+    xSorted = pts[np.argsort(pts[:, 0]), :]
+    leftMost = xSorted[:2, :]
+    rightMost = xSorted[2:, :]
+    leftMost = leftMost[np.argsort(leftMost[:, 1]), :]
+    (tl, bl) = leftMost
+    rightMost = rightMost[np.argsort(rightMost[:, 1]), :]
+    (tr, br) = rightMost
+    return np.array([tl, tr, br, bl], dtype="float32")
+
+
+def compute_mer_length(mer):
+    '''
+    Compute lenght and width of the given oriented rectangle,
+    where the vertices are ordered as
+    (top-left, bottom-left, bottom-right, top-right)
+    '''
+    #pts = order_points(mer)
+    length = cv2.norm(mer[0] - mer[1], 2)
+    width = cv2.norm(mer[0] - mer[3], 2)
+    print(length, width)
+    return length, width
+
+
 def show_blobs_mer(img, blobs_mer, window_name):
     '''
     Show the given oriented rectangles on the given image
@@ -392,7 +416,9 @@ def main():
     angles = get_blobs_orientation_from_cov(components_coords, centroids)
     show_blobs_axis(img, angles, centroids, "Major axis")
     blobs_mer = get_blobs_mer(components_coords)
+    compute_mer_length(blobs_mer[1])
     show_blobs_mer(img, blobs_mer, "MER")
+
     # blobs_bbox = get_blobs_straight_bbox(components_coords)
     # show_blobs_straight_bbox(threshed, blobs_bbox, "BBOX")
 
