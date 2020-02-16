@@ -24,6 +24,66 @@ IMAGES = {
 }
 
 
+BIT_QUADS = {
+    '1': [
+        np.array((
+            [1, 0],
+            [0, 0]),
+            dtype="int"
+        ),
+        np.array((
+            [0, 1],
+            [0, 0]),
+            dtype="int"
+        ),
+        np.array((
+            [0, 0],
+            [1, 0]),
+            dtype="int"
+        ),
+        np.array((
+            [0, 0],
+            [0, 1]),
+            dtype="int"
+        )
+    ],
+    '3': [
+        np.array((
+            [0, 1],
+            [1, 1]),
+            dtype="int"
+        ),
+        np.array((
+            [1, 0],
+            [1, 1]),
+            dtype="int"
+        ),
+        np.array((
+            [1, 1],
+            [0, 1]),
+            dtype="int"
+        ),
+        np.array((
+            [1, 1],
+            [1, 0]),
+            dtype="int"
+        )
+    ],
+    'D': [
+        np.array((
+            [1, 0],
+            [0, 1]),
+            dtype="int"
+        ),
+        np.array((
+            [0, 1],
+            [1, 0]),
+            dtype="int"
+        )
+    ]
+}
+
+
 def read_images():
     IMAGE_PATHS['task-1'] = [
         path.name for path in Path(f'{IMG_DIR}/task-1').rglob('*.bmp')
@@ -56,7 +116,7 @@ def show_connected_components(labels, window_name):
     show_image(labeled_img, window_name)
 
 
-def get_connected_component(labels, label, img_size):
+def get_connected_component(labels, label):
     '''
     Return a specific connected component on a new image
     '''
@@ -69,9 +129,9 @@ def get_components_coords(labels, num_labels):
     '''
     Compute connected components coordinates
     '''
-    components_coords = []
+    components_coords = [None] * num_labels
     for i in range(0, num_labels):
-        components_coords.append(np.fliplr(np.argwhere(labels == i)))
+        components_coords[i] = np.fliplr(np.argwhere(labels == i))
     return components_coords
 
 
@@ -163,7 +223,6 @@ def get_blobs_orientation_from_moments(moments):
                 (2 * blob_moments['mu11']) /
                 (blob_moments['mu02'] - blob_moments['mu20'] + 1e-5)
             )
-            print(theta)
             angles[i] = {
                 'major': theta,
                 'minor': theta + (np.pi / 2)
@@ -192,6 +251,58 @@ def get_blobs_orientation_from_cov(components_coords, centroids):
             'minor': np.arctan(x_v2 / y_v2)
         }
     return angles
+
+
+def get_holes_number(labels, num_labels):
+	'''
+	Compute the number of holes for each connected component,
+	excluding the background
+	'''
+    n_holes = [None] * num_labels
+    for i in range(1, num_labels):
+        comp = get_connected_component(labels, i)
+        holes = 1 - euler_number(comp, connectivity=4)
+        n_holes[i] = holes
+    return n_holes
+
+
+def get_strides(img, window_size):
+    '''
+    Return a new matrix, which is the set of sliding windows
+    on the original image, of the given size
+    '''
+    shape = (
+        img.shape[0] - window_size + 1,
+        img.shape[1] - window_size + 1,
+        window_size, window_size
+    )
+    strides = 2 * img.strides
+    patches = np.lib.stride_tricks.as_strided(
+        img, shape=shape, strides=strides
+    )
+    patches = patches.reshape(-1, window_size, window_size)
+    return patches
+
+
+def euler_number(comp, connectivity=8):
+    '''
+    Compute the Euler number of the given image,
+    containing a single connected component
+    '''
+    matches = {'1': 0, '3': 0, 'D': 0}
+    patches = get_strides((comp.copy() / 255), window_size=2)
+    for quad_type, kernels in BIT_QUADS.items():
+        for kernel in kernels:
+            for roi in patches:
+                res = roi - kernel
+                if cv2.countNonZero(res) == 0:
+                    matches[quad_type] += 1
+    euler = matches['1'] - matches['3']
+    euler = (
+        euler + 2 * matches['D'] if connectivity == 4
+        else euler - 2 * matches['D']
+    )
+    return int(euler / 4)
 
 
 def get_blobs_mer(components_coords):
@@ -260,7 +371,7 @@ def show_blobs_axis(img, angles, centroids, window_name):
 
 
 def main():
-    img = cv2.imread('img/task-1/04.bmp', cv2.IMREAD_GRAYSCALE)
+    img = cv2.imread('img/task-1/05.bmp', cv2.IMREAD_GRAYSCALE)
     _, threshed = cv2.threshold(
         img, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU
     )
@@ -271,6 +382,10 @@ def main():
     )
     show_connected_components(labels, window_name="Connected components")
     components_coords = get_components_coords(labels, num_labels)
+
+    n_holes = get_holes_number(labels, num_labels)
+    print(n_holes)
+
     moments = compute_moments(components_coords, centroids)
     show_centroids(img, centroids, "Centroids")
     angles = get_blobs_orientation_from_moments(moments)
