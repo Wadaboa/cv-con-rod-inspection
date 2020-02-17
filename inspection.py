@@ -1,27 +1,13 @@
-from pathlib import Path
+'''
+Motorcycle connecting rods inspection
+'''
+
+
+import plac
 
 import cv2
 import numpy as np
-import skimage
-
-
-IMG_DIR = 'img'
-IMAGE_PATHS = {
-    'task-1': [],
-    'task-2': {
-        'change-1': [],
-        'change-2': [],
-        'change-3': [],
-    }
-}
-IMAGES = {
-    'task-1': [],
-    'task-2': {
-        'change-1': [],
-        'change-2': [],
-        'change-3': [],
-    }
-}
+from scipy.spatial import distance as dist
 
 
 BIT_QUADS = {
@@ -82,16 +68,6 @@ BIT_QUADS = {
         )
     ]
 }
-
-
-def read_images():
-    IMAGE_PATHS['task-1'] = [
-        path.name for path in Path(f'{IMG_DIR}/task-1').rglob('*.bmp')
-    ]
-    for i in range(1, 4):
-        IMAGE_PATHS['task-2'][f'change-{i}'] = [
-            path.name for path in Path(f'{IMG_DIR}/task-2/change-{i}').rglob('*.bmp')
-        ]
 
 
 def show_image(image, window_name, wait=True):
@@ -199,7 +175,7 @@ def compute_centroids_from_moments(moments):
     return centroids
 
 
-def show_centroids(img, centroids, window_name):
+def show_centroids(img, centroids, window_name, centroids_color=(255, 0, 0)):
     '''
     Show the given centroid on the image as small circles
     '''
@@ -207,7 +183,8 @@ def show_centroids(img, centroids, window_name):
     for centroid in centroids:
         if centroid is not None:
             cv2.circle(
-                image, (int(centroid[0]), int(centroid[1])), 1, (255, 0, 0), 1
+                image, (int(centroid[0]), int(centroid[1])),
+                1, centroids_color, 1
             )
     show_image(image, window_name)
 
@@ -253,7 +230,7 @@ def get_blobs_orientation_from_cov(components_coords, centroids):
     return angles
 
 
-def get_holes_number(labels, num_labels):
+def holes_number(labels, num_labels):
     '''
     Compute the number of holes for each connected component,
     excluding the background
@@ -261,7 +238,7 @@ def get_holes_number(labels, num_labels):
     n_holes = [None] * num_labels
     for i in range(1, num_labels):
         comp = get_connected_component(labels, i)
-        holes = 1 - euler_number(comp, connectivity=4)
+        holes = 1 - euler_number(comp, connectivity=8)
         n_holes[i] = holes
     return n_holes
 
@@ -305,15 +282,97 @@ def euler_number(comp, connectivity=8):
     return int(euler / 4)
 
 
+def neighborhood(point, connectivity=8):
+    '''
+    Return the neighborhood of the given point
+    '''
+    x, y = tuple(point)
+    return np.array([
+        np.array([x - 1, y - 1]),
+        np.array([x, y - 1]),
+        np.array([x + 1, y - 1]),
+        np.array([x - 1, y]),
+        np.array([x + 1, y]),
+        np.array([x - 1, y + 1]),
+        np.array([x, y + 1]),
+        np.array([x + 1, y + 1])
+    ]) if connectivity == 8 else np.array([
+        np.array([x, y - 1]),
+        np.array([x - 1, y]),
+        np.array([x + 1, y]),
+        np.array([x, y + 1])
+    ])
+
+
+def find_contour(coords, connectivity=8):
+    '''
+    Find the contour of the given connected component
+    '''
+    contour = []
+    for coord in coords:
+        neighbors = neighborhood(coord, connectivity)
+        for neighbor in neighbors:
+            if not any(np.equal(coords, neighbor).all(1)):
+                contour.append(coord)
+                break
+    return np.array(contour)
+
+
+def haralick_circularity(contour, centroid):
+    '''
+    Compute Haralick's circularity measure
+    '''
+    distances = [dist.euclidean(coord, centroid) for coord in contour]
+    std = np.std(distances)
+    return np.mean(distances) / np.std(distances) if std > 0 else float('INF')
+
+
+def find_circles(img, haralick_threshold=3):
+    '''
+    Find circles in the given image
+    '''
+    image = img.copy()
+    num_labels, labels, _, centroids = cv2.connectedComponentsWithStats(
+        image, connectivity=8
+    )
+    components_coords = get_components_coords(labels, num_labels)
+    circles = []
+    offset = 2
+    for i, coords in enumerate(components_coords[offset:]):
+        contour = find_contour(coords)
+        circularity = haralick_circularity(
+            contour, centroids[i + offset]
+        )
+        if circularity >= haralick_threshold:
+            index = np.random.choice(contour.shape[0], 1, replace=False)
+            radius = dist.euclidean(
+                contour[index], centroids[i + offset]
+            )
+            circles.append((
+                centroids[i + offset][0], centroids[i + offset][1], radius
+            ))
+    return circles
+
+
+def show_circles(img, circles, window_name):
+    '''
+    Show the given circles on the given image,
+    where a circle is (x_center, y_center, radius)
+    '''
+    image = img.copy()
+    for (x, y, r) in circles:
+        cv2.circle(image, (int(x), int(y)), 1, (0, 100, 100), 2)
+        cv2.circle(image, (int(x), int(y)), int(r), (255, 0, 255), 2)
+    show_image(image, window_name)
+
+
 def get_blobs_mer(components_coords):
     '''
     Compute blobs minimum enclosing oriented rectangle
     '''
-    blobs_mer = [None]
-    for _, coords in enumerate(components_coords):
-        blobs_mer.append(
-            np.int0(cv2.boxPoints(cv2.minAreaRect(coords)))
-        )
+    blobs_mer = [None] * len(components_coords)
+    for i, coords in enumerate(components_coords):
+        blobs_mer[i] = np.int0(cv2.boxPoints(cv2.minAreaRect(coords)))
     return blobs_mer
 
 
@@ -321,34 +380,47 @@ def get_blobs_straight_bbox(components_coords):
     '''
     Compute blobs straight bounding rectangle
     '''
-    blobs_bbox = [None]
-    for _, coords in enumerate(components_coords):
-        blobs_bbox.append(cv2.boundingRect(coords))
+    blobs_bbox = [None] * len(components_coords)
+    for i, coords in enumerate(components_coords):
+        blobs_bbox[i] = cv2.boundingRect(coords)
     return blobs_bbox
 
 
 def order_points(pts):
-    xSorted = pts[np.argsort(pts[:, 0]), :]
-    leftMost = xSorted[:2, :]
-    rightMost = xSorted[2:, :]
-    leftMost = leftMost[np.argsort(leftMost[:, 1]), :]
-    (tl, bl) = leftMost
-    rightMost = rightMost[np.argsort(rightMost[:, 1]), :]
-    (tr, br) = rightMost
+    '''
+    Order the given vertices as
+    (top-left, top-right, bottom-right, bottom-left)
+    '''
+    x_sorted = pts[np.argsort(pts[:, 0]), :]
+    left_most = x_sorted[:2, :]
+    right_most = x_sorted[2:, :]
+    left_most = left_most[np.argsort(left_most[:, 1]), :]
+    (tl, bl) = left_most
+    right_most = right_most[np.argsort(right_most[:, 1]), :]
+    (tr, br) = right_most
     return np.array([tl, tr, br, bl], dtype="float32")
 
 
-def compute_mer_length(mer):
+def compute_mer_shape(mer):
     '''
     Compute lenght and width of the given oriented rectangle,
-    where the vertices are ordered as
-    (top-left, bottom-left, bottom-right, top-right)
+    after ordering the given vertices as
+    (top-left, top-right, bottom-right, bottom-left)
     '''
-    #pts = order_points(mer)
-    length = cv2.norm(mer[0] - mer[1], 2)
-    width = cv2.norm(mer[0] - mer[3], 2)
-    print(length, width)
+    pts = order_points(mer)
+    length = dist.euclidean(mer[0], mer[1])
+    width = dist.euclidean(mer[0], mer[3])
     return length, width
+
+
+def compute_blobs_shape(blobs_mer):
+    '''
+    Compute lenght and width of every blob
+    '''
+    blobs_shape = [None] * len(blobs_mer)
+    for i, mer in enumerate(blobs_mer):
+        blobs_shape[i] = compute_mer_shape(mer)
+    return blobs_shape
 
 
 def show_blobs_mer(img, blobs_mer, window_name):
@@ -374,7 +446,7 @@ def show_blobs_straight_bbox(img, blobs_bbox, window_name):
     show_image(image, window_name)
 
 
-def show_blobs_axis(img, angles, centroids, window_name):
+def show_blobs_axis(img, angles, centroids, window_name, axis='major'):
     '''
     Show blobs major and minor axis as a line
     through the barycentre
@@ -382,46 +454,61 @@ def show_blobs_axis(img, angles, centroids, window_name):
     image = img.copy()
     for i, centroid in enumerate(centroids):
         if angles[i] is not None:
-            major_axis_angle = angles[i]['major']
+            major_axis_angle = angles[i][axis]
             point = (
                 centroid + img.shape[0] *
                 np.array([np.cos(major_axis_angle), np.sin(major_axis_angle)])
             )
             cv2.line(
                 image, (int(centroid[0]), int(centroid[1])),
-                (int(point[0]), int(point[1])), (0, 0, 255), 1
+                    (int(point[0]), int(point[1])), (0, 0, 255), 1
             )
     show_image(image, window_name)
 
 
-def main():
-    img = cv2.imread('img/task-1/05.bmp', cv2.IMREAD_GRAYSCALE)
+@plac.annotations(
+    image_path=("Path to the image file", "option", "i", str),
+)
+def main(image_path='img/task-1/01.bmp'):
+    '''
+    Inspect the given connecting rod image
+    '''
+    # Load the image as grayscale
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise Exception('Please provide a valid image path.')
+
+    # Apply Otsu threshold and invert the image
     _, threshed = cv2.threshold(
         img, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU
     )
     inv_threshed = cv2.bitwise_not(threshed)
     show_image(inv_threshed, "Inverted threshed")
+
+    # Show circles
+    circles = find_circles(threshed)
+    show_circles(img, circles, window_name="Circles")
+
+    # Compute connected components
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
         inv_threshed, connectivity=8
     )
     show_connected_components(labels, window_name="Connected components")
     components_coords = get_components_coords(labels, num_labels)
 
-    n_holes = get_holes_number(labels, num_labels)
-    print(n_holes)
+    # Compute the number of holes in each component
+    n_holes = holes_number(labels, num_labels)
 
+    # Compute blobs moments and show their orientation
     moments = compute_moments(components_coords, centroids)
-    show_centroids(img, centroids, "Centroids")
     angles = get_blobs_orientation_from_moments(moments)
-    angles = get_blobs_orientation_from_cov(components_coords, centroids)
-    show_blobs_axis(img, angles, centroids, "Major axis")
-    blobs_mer = get_blobs_mer(components_coords)
-    compute_mer_length(blobs_mer[1])
-    show_blobs_mer(img, blobs_mer, "MER")
+    show_blobs_axis(img, angles, centroids, "Major axis", axis="major")
 
-    # blobs_bbox = get_blobs_straight_bbox(components_coords)
-    # show_blobs_straight_bbox(threshed, blobs_bbox, "BBOX")
+    # Show blobs oriented rectangles and compute shape features
+    blobs_mer = get_blobs_mer(components_coords)
+    show_blobs_mer(img, blobs_mer, "MER")
+    blobs_shape = compute_blobs_shape(blobs_mer)
 
 
 if __name__ == '__main__':
-    main()
+    plac.call(main)
