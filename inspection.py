@@ -200,10 +200,7 @@ def get_blobs_orientation_from_moments(moments):
                 (2 * blob_moments['mu11']) /
                 (blob_moments['mu02'] - blob_moments['mu20'] + 1e-5)
             )
-            angles[i] = {
-                'major': theta,
-                'minor': theta + (np.pi / 2)
-            }
+            angles[i] = theta
     return angles
 
 
@@ -223,11 +220,32 @@ def get_blobs_orientation_from_cov(components_coords, centroids):
         sort_indices = np.argsort(evals)[::-1]
         x_v1, y_v1 = evecs[:, sort_indices[0]]
         x_v2, y_v2 = evecs[:, sort_indices[1]]
-        angles[i] = {
-            'major': np.arctan(x_v1 / y_v1),
-            'minor': np.arctan(x_v2 / y_v2)
-        }
+        angles[i] = np.arctan(x_v1 / y_v1)
     return angles
+
+
+def remove_iron_powder(img):
+    '''
+    Remove scattered iron powder from the given binary image,
+    by applying median blur and morphological opening
+    '''
+    image = img.copy()
+    image = cv2.medianBlur(image, 3)
+    kernels = [np.ones((3, 1)), np.ones((1, 2))]
+    for kernel in kernels:
+        image = cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
+    return image
+
+
+def detach_rods(img):
+    '''
+    Detach rods in the given image, by applying
+    morphological operations
+    '''
+    image = img.copy()
+    kernel = np.ones((3, 3))
+    image = cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
+    return image
 
 
 def holes_number(labels, num_labels):
@@ -403,14 +421,15 @@ def order_points(pts):
 
 def compute_mer_shape(mer):
     '''
-    Compute lenght and width of the given oriented rectangle,
-    after ordering the given vertices as
-    (top-left, top-right, bottom-right, bottom-left)
+    Compute lenght and width of the given oriented rectangle.
+    Return (length, width)
     '''
-    pts = order_points(mer)
-    length = dist.euclidean(mer[0], mer[1])
-    width = dist.euclidean(mer[0], mer[3])
-    return length, width
+    distances = [
+        dist.euclidean(mer[0], mer[1]),
+        dist.euclidean(mer[0], mer[2]),
+        dist.euclidean(mer[0], mer[3])
+    ]
+    return (np.median(distances), np.min(distances))
 
 
 def compute_blobs_shape(blobs_mer):
@@ -446,7 +465,7 @@ def show_blobs_straight_bbox(img, blobs_bbox, window_name):
     show_image(image, window_name)
 
 
-def show_blobs_axis(img, angles, centroids, window_name, axis='major'):
+def show_blobs_axis(img, angles, centroids, window_name):
     '''
     Show blobs major and minor axis as a line
     through the barycentre
@@ -454,22 +473,30 @@ def show_blobs_axis(img, angles, centroids, window_name, axis='major'):
     image = img.copy()
     for i, centroid in enumerate(centroids):
         if angles[i] is not None:
-            major_axis_angle = angles[i][axis]
-            point = (
-                centroid + img.shape[0] *
-                np.array([np.cos(major_axis_angle), np.sin(major_axis_angle)])
-            )
-            cv2.line(
-                image, (int(centroid[0]), int(centroid[1])),
+            for shift in [0, np.pi / 2]:
+                angle = angles[i] + shift
+                point = (
+                    centroid + img.shape[0] *
+                    np.array([np.cos(angle), np.sin(angle)])
+                )
+                cv2.line(
+                    image, (int(centroid[0]), int(centroid[1])),
                     (int(point[0]), int(point[1])), (0, 0, 255), 1
-            )
+                )
     show_image(image, window_name)
+
+# def print_stats():
 
 
 @plac.annotations(
-    image_path=("Path to the image file", "option", "i", str),
+    image_path=(
+        "Path to the image file", "option", "i", str
+    ),
+    remove_powder=(
+        "Remove iron powder from the input image", "option", "r", bool
+    )
 )
-def main(image_path='img/task-1/01.bmp'):
+def main(image_path='img/task-1/01.bmp', remove_powder=False):
     '''
     Inspect the given connecting rod image
     '''
@@ -484,6 +511,15 @@ def main(image_path='img/task-1/01.bmp'):
     )
     inv_threshed = cv2.bitwise_not(threshed)
     show_image(inv_threshed, "Inverted threshed")
+
+    # Remove iron powder
+    if remove_powder:
+		inv_threshed = remove_iron_powder(inv_threshed)
+    	show_image(inv_threshed, "Without iron powder")
+
+    # Detach rods
+    # inv_threshed = detach_rods(inv_threshed)
+    # show_image(inv_threshed, "Detached rods")
 
     # Show circles
     circles = find_circles(threshed)
@@ -502,12 +538,15 @@ def main(image_path='img/task-1/01.bmp'):
     # Compute blobs moments and show their orientation
     moments = compute_moments(components_coords, centroids)
     angles = get_blobs_orientation_from_moments(moments)
-    show_blobs_axis(img, angles, centroids, "Major axis", axis="major")
+    show_blobs_axis(img, angles, centroids, "Major axis")
 
     # Show blobs oriented rectangles and compute shape features
     blobs_mer = get_blobs_mer(components_coords)
     show_blobs_mer(img, blobs_mer, "MER")
     blobs_shape = compute_blobs_shape(blobs_mer)
+
+    # Print connected components analysis
+    print_stats()
 
 
 if __name__ == '__main__':
