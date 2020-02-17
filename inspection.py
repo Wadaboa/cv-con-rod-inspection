@@ -226,19 +226,6 @@ def get_blobs_orientation_from_cov(components_coords, centroids):
     return angles
 
 
-def remove_iron_powder(img):
-    '''
-    Remove scattered iron powder from the given binary image,
-    by applying median blur and morphological opening
-    '''
-    image = img.copy()
-    image = cv2.medianBlur(image, 3)
-    kernels = [np.ones((3, 1)), np.ones((1, 2))]
-    for kernel in kernels:
-        image = cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
-    return image
-
-
 def detach_rods(img):
     '''
     Detach rods in the given image, by applying
@@ -488,19 +475,17 @@ def show_blobs_axis(img, angles, centroids, window_name):
     show_image(image, window_name)
 
 
-def print_stats(stats, n_holes, blobs_shape, centroids, area_threshold=2000):
+def print_stats(n_holes, blobs_shape, centroids):
     '''
     Print some discovered properties
     '''
     for i in range(1, len(blobs_shape)):
-        area = stats[i][cv2.CC_STAT_AREA]
-        if area >= area_threshold:
-            print(f'Connected component #{i}')
-            print(f'- Centroid position: {centroids[i]}')
-            print(f'- Rod type: {"A" if n_holes[i] == 1 else "B"}')
-            print(f'- Area: {area}')
-            print(f'- Length: {blobs_shape[i][0]}')
-            print(f'- Width: {blobs_shape[i][1]}')
+        print(f'Connected component #{i}')
+        print(f'- Centroid position: {centroids[i]}')
+        print(f'- Rod type: {"A" if n_holes[i] == 1 else "B"}')
+        print(f'- Length: {blobs_shape[i][0]}')
+        print(f'- Width: {blobs_shape[i][1]}')
+        if i != len(blobs_shape) - 1:
             print()
 
 
@@ -592,7 +577,7 @@ def main(image_path='img/task-1/01.bmp'):
     n_holes = holes_number(labels, num_labels)
 
     # Print connected components analysis
-    print_stats(stats, n_holes, blobs_shape, centroids)
+    print_stats(n_holes, blobs_shape, centroids)
 
 
 if __name__ == '__main__':
