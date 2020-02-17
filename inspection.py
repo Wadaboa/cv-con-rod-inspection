@@ -69,6 +69,8 @@ BIT_QUADS = {
     ]
 }
 
+AREA_THRESHOLD = 1200
+
 
 def show_image(image, window_name, wait=True):
     '''
@@ -481,22 +483,61 @@ def show_blobs_axis(img, angles, centroids, window_name):
                 )
                 cv2.line(
                     image, (int(centroid[0]), int(centroid[1])),
-                    (int(point[0]), int(point[1])), (0, 0, 255), 1
+                        (int(point[0]), int(point[1])), (0, 0, 255), 1
                 )
     show_image(image, window_name)
 
-# def print_stats():
+
+def print_stats(stats, n_holes, blobs_shape, centroids, area_threshold=2000):
+    '''
+    Print some discovered properties
+    '''
+    for i in range(1, len(blobs_shape)):
+        area = stats[i][cv2.CC_STAT_AREA]
+        if area >= area_threshold:
+            print(f'Connected component #{i}')
+            print(f'- Centroid position: {centroids[i]}')
+            print(f'- Rod type: {"A" if n_holes[i] == 1 else "B"}')
+            print(f'- Area: {area}')
+            print(f'- Length: {blobs_shape[i][0]}')
+            print(f'- Width: {blobs_shape[i][1]}')
+            print()
+
+
+def filter_by_area(num_labels, labels, stats, centroids, area_threshold):
+    '''
+    Remove connected components which have a smaller area
+    than the given one
+    '''
+    total_labels = num_labels
+    to_remove = []
+    for i in range(1, total_labels):
+        area = stats[i][cv2.CC_STAT_AREA]
+        if area < area_threshold:
+            to_remove.append(i)
+            labels[labels == i] = 0
+            num_labels -= 1
+
+    shift_labels = list(to_remove)
+    new_labels = labels.copy()
+    while shift_labels:
+        i = shift_labels[0]
+        if i >= total_labels:
+            break
+        shift_labels[0] = i + 1
+        new_labels[new_labels == i + 1] = i
+    return (
+        num_labels,
+        new_labels,
+        np.delete(stats, to_remove, axis=0),
+        np.delete(centroids, to_remove, axis=0)
+    )
 
 
 @plac.annotations(
-    image_path=(
-        "Path to the image file", "option", "i", str
-    ),
-    remove_powder=(
-        "Remove iron powder from the input image", "option", "r", bool
-    )
+    image_path=("Path to the image file", "option", "i", str)
 )
-def main(image_path='img/task-1/01.bmp', remove_powder=False):
+def main(image_path='img/task-1/01.bmp'):
     '''
     Inspect the given connecting rod image
     '''
@@ -512,28 +553,30 @@ def main(image_path='img/task-1/01.bmp', remove_powder=False):
     inv_threshed = cv2.bitwise_not(threshed)
     show_image(inv_threshed, "Inverted threshed")
 
-    # Remove iron powder
-    if remove_powder:
-		inv_threshed = remove_iron_powder(inv_threshed)
-    	show_image(inv_threshed, "Without iron powder")
-
     # Detach rods
     # inv_threshed = detach_rods(inv_threshed)
     # show_image(inv_threshed, "Detached rods")
-
-    # Show circles
-    circles = find_circles(threshed)
-    show_circles(img, circles, window_name="Circles")
 
     # Compute connected components
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
         inv_threshed, connectivity=8
     )
     show_connected_components(labels, window_name="Connected components")
+
+    # Remove iron powder and distractors
+    num_labels, labels, stats, centroids = filter_by_area(
+        num_labels, labels, stats, centroids, AREA_THRESHOLD
+    )
+    show_connected_components(
+        labels, window_name="Connected components after filtering"
+    )
+
+    # Compute connected components coordinates
     components_coords = get_components_coords(labels, num_labels)
 
-    # Compute the number of holes in each component
-    n_holes = holes_number(labels, num_labels)
+    # Show circles
+    circles = find_circles(threshed)
+    show_circles(img, circles, window_name="Circles")
 
     # Compute blobs moments and show their orientation
     moments = compute_moments(components_coords, centroids)
@@ -545,8 +588,11 @@ def main(image_path='img/task-1/01.bmp', remove_powder=False):
     show_blobs_mer(img, blobs_mer, "MER")
     blobs_shape = compute_blobs_shape(blobs_mer)
 
+    # Compute the number of holes in each component
+    n_holes = holes_number(labels, num_labels)
+
     # Print connected components analysis
-    print_stats()
+    print_stats(stats, n_holes, blobs_shape, centroids)
 
 
 if __name__ == '__main__':
