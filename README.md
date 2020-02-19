@@ -1,8 +1,10 @@
 # Connecting rods inspection
 
+![Example image](img/task-1/01.bmp)
+
 ## Description
 This university project is an implementation of a visual system which is able to analyze
-motorcycle connecting rods, by the following steps:
+motorcycle connecting rods, by applying the following steps:
 1. A grayscale image is loaded and binarized using `Otsu's method`
 2. The image is bitwise inverted to get a white foreground and a black background
 3. Morphological operations are carried out in order to detach touching rods
